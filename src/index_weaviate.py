@@ -36,15 +36,25 @@ def get_weaviate_client():
         sys.exit(1)
 
 
+def delete_collection(client):
+    """Delete the Document collection if it exists."""
+    try:
+        client.collections.delete("Document")
+        console.print("[green]✓ Deleted existing Document collection[/green]")
+    except Exception as e:
+        console.print(f"[yellow]Collection does not exist or could not be deleted: {e}[/yellow]")
+
+
 def create_schema(client):
     """Create or verify Document class schema in Weaviate."""
+    # Check if collection already exists
     try:
-        # Check if class exists
-        schema = client.collections.get_by_name("Document")
-        console.print("[yellow]Document class already exists.[/yellow]")
-        return
-    except Exception:
-        pass
+        collection_list = [c.name for c in client.collections.list_all()]
+        if "Document" in collection_list:
+            console.print("[yellow]Document collection already exists.[/yellow]")
+            return
+    except Exception as e:
+        console.print(f"[yellow]Could not verify existing collections: {e}[/yellow]")
     
     # Create the class if it doesn't exist
     try:
@@ -134,7 +144,7 @@ def get_embedding(text):
         return None
 
 
-def index_documents(json_file):
+def index_documents(json_file, delete_existing=False):
     """Index documents from JSON file into Weaviate."""
     # Load JSON
     try:
@@ -147,6 +157,10 @@ def index_documents(json_file):
     
     # Connect to Weaviate
     weaviate_client = get_weaviate_client()
+    
+    # Delete existing collection if requested
+    if delete_existing:
+        delete_collection(weaviate_client)
     
     # Create schema
     create_schema(weaviate_client)
@@ -216,10 +230,16 @@ def index_documents(json_file):
     default='data/dummy_data/qasper-train-v0.1.json',
     help='Path to JSON file containing documents',
 )
-def main(file):
+@click.option(
+    '--delete',
+    is_flag=True,
+    default=False,
+    help='Delete existing Document collection before indexing',
+)
+def main(file, delete):
     """Index QASPER documents into Weaviate."""
     # OpenAI client will be initialized on first use
-    index_documents(file)
+    index_documents(file, delete_existing=delete)
 
 
 if __name__ == "__main__":

@@ -11,6 +11,8 @@ from openai import OpenAI
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
+from langsmith import traceable
+from langsmith.wrappers import wrap_openai
 
 console = Console()
 client_openai = None
@@ -29,7 +31,7 @@ def get_openai_client():
         if not api_key:
             console.print("[red]Error: OPENAI_API_KEY environment variable not set[/red]")
             sys.exit(1)
-        client_openai = OpenAI(api_key=api_key)
+        client_openai = wrap_openai(OpenAI(api_key=api_key))
     return client_openai
 
 
@@ -61,6 +63,7 @@ def get_embedding(text):
         return None
 
 
+@traceable(run_type="retriever")
 def retrieve_documents(query_embedding, weaviate_client, top_k=TOP_K):
     """Retrieve top-k similar documents from Weaviate."""
     try:
@@ -76,7 +79,7 @@ def retrieve_documents(query_embedding, weaviate_client, top_k=TOP_K):
         console.print(f"[red]Error retrieving documents: {e}[/red]")
         return []
 
-
+@traceable(run_type="llm")
 def generate_answer(query, documents):
     """Generate answer using OpenAI with retrieved documents as context, streamed."""
     if not documents:
