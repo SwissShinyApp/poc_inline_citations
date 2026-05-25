@@ -13,6 +13,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from langsmith import traceable
 from langsmith.wrappers import wrap_openai
+import json
 
 console = Console()
 client_openai = None
@@ -20,8 +21,18 @@ client_openai = None
 WEAVIATE_URL = os.getenv("WEAVIATE_URL", "http://localhost:8080")
 EMBEDDING_MODEL = "text-embedding-3-small"
 GENERATION_MODEL = os.getenv("GENERATION_MODEL", "gpt-4-turbo")
-TOP_K = int(os.getenv("TOP_K", "5"))
+TOP_K = int(os.getenv("TOP_K", "2"))
 
+
+def load_prompts():
+    """Load prompts from prompts.json file."""
+    try:
+        with open("src/prompts.json", "r") as f:
+            prompts = json.load(f)
+            return {p["name"]: p["prompt"] for p in prompts}
+    except Exception as e:
+        console.print(f"[red]Error loading prompts: {e}[/red]")
+        sys.exit(1)
 
 def get_openai_client():
     """Get or initialize OpenAI client."""
@@ -95,15 +106,21 @@ def generate_answer(query, documents):
         context_parts.append(f"[{i}] {title} ({paper_id}):\n{text}...")
     
     context = "\n\n".join(context_parts)
+    prompts = load_prompts()
     
     prompt = f"""You are a helpful research assistant. Answer the following question based on the provided research papers.
 
                 Question: {query}
 
-                Relevant Documents:
+                RELEVANT DOCUMENTS:
                 {context}
 
-                Please provide a clear, concise answer based on the documents above. When citing information, reference the document number (e.g., [1], [2], etc.)."""
+                CITATION FORMAT: 
+                {prompts['CITATION_FORMAT']}
+                
+                INSTRUCTIONS: 
+                {prompts['NAIVE_ALSE']}
+                """
     
     try:
         client = get_openai_client()
