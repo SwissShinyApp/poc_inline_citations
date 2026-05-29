@@ -1,10 +1,30 @@
 [
     {
         "name": "CITATION_FORMAT",
-        "prompt": "Each citation in-text should be reference as [[{'doc_index': <<DOC INDEX POSITION ON RETRIEVED DOCUMENTS, 'section_name': <<SECTION_NAME>>, 'paper_id': <<PAPER ID>>]]"
+        "prompt": "Each citation in-text should be referenced as [{{'doc_index': DOC_INDEX, 'section_name': SECTION, 'paper_id': PAPER_ID}}] where DOC_INDEX is the position in the EVIDENCE block, SECTION is the section name, and PAPER_ID is the paper identifier. After the answer, provide a 'References:' section with details for each citation."
     },
     {
-        "name": "NAIVE_ALSE",
-        "prompt": "Write an accurate, engaging, and concise answer for the given question using only the provided search results (some of which might be irrelevant) and cite them properly. Use an unbiased and journalistic tone. Always cite for any factual claim. When citing several search results, use <<[[CITATION_1]], [[CITATION_2]], [[CITATION_3]]>>. Cite at least one document and at most three documents for each content meaningful sentence. If multiple documents support the sentence, only cite a minimum sufficient subset of the documents."
+        "name": "PLAN_PROMPT",
+        "prompt": "Read the EVIDENCE lines and plan a complete answer.\nRules:\n- Choose the key facts needed to answer the QUESTION.\n- For each fact, list ONLY the supporting doc indices from EVIDENCE (e.g., index 0, index 2).\n- Use indices that exist in EVIDENCE. Do not invent indices.\n- Return ONLY the bullet plan (no extra text).\n\nReturn format (exactly):\n- Fact: <short clause>\n  Supports: [doc_index: X, Y]\n\nEVIDENCE:\n{evidence}\n\nQUESTION: {question}"
+    },
+    {
+        "name": "DRAFT_PROMPT",
+        "prompt": "You will write a complete answer to the QUESTION using ONLY the EVIDENCE lines.\nFormatting rules (strict):\n- After each factual claim, insert citations immediately before the period in format: [{{'doc_index': X, 'section_name': 'SECTION', 'paper_id': 'PAPER_ID'}}]\n- Use ONLY indices and paper_ids present in EVIDENCE. Do not invent them.\n- After the answer, write a References list that includes EXACTLY the citations you used, one per line.\n- For each citation, include the full dict with doc_index, section_name, and paper_id.\n- Do NOT output explanations or any text before/after the required sections.\n\nPLAN:\n{plan}\n\nEVIDENCE:\n{evidence}\n\nQUESTION: {question}\n\nReturn ONLY:\n<final answer with inline dict citations>\n\nReferences:\n[{{'doc_index': 0, 'section_name': '...', 'paper_id': '...'}}]\n[{{'doc_index': 1, 'section_name': '...', 'paper_id': '...'}}]\n..."
+    },
+    {
+        "name": "INSURANCE_PROMPT",
+        "prompt": "You will receive a DRAFT answer that should follow the required citation format.\nFix it so that ALL rules are satisfied:\n- Every factual claim has at least one inline dict citation [{{'doc_index': X, 'section_name': '...', 'paper_id': '...'}}] placed before the period.\n- Every doc_index and paper_id used appears in EVIDENCE.\n- The 'References:' section includes ONLY the used citations (by doc_index order) with full dict details.\n- Remove unsupported claims or add the correct citations using available EVIDENCE. Do NOT add new facts.\n- Output ONLY the corrected answer and the References block (no explanations).\n\nEVIDENCE:\n{evidence}\n\nDRAFT:\n{draft}\n\nReturn ONLY:\n<corrected answer with inline dict citations>\n\nReferences:\n[{{'doc_index': 0, 'section_name': '...', 'paper_id': '...'}}]\n[{{'doc_index': 1, 'section_name': '...', 'paper_id': '...'}}]\n..."
+    },
+    {
+        "name": "SYSTEM_PROMPT_PLANNER",
+        "prompt": "You are a comprehensive planner. Read evidence and create detailed plans with multiple supporting facts."
+    },
+    {
+        "name": "SYSTEM_PROMPT_DRAFTER",
+        "prompt": "You are a thorough citation expert. Write comprehensive, detailed answers with inline dict citations. Include examples, explanations, and all relevant context from the evidence."
+    },
+    {
+        "name": "SYSTEM_PROMPT_INSURER",
+        "prompt": "You are a citation validator. Verify all inline citations match the evidence. Preserve all relevant details and expand where possible with additional supported facts."
     }
 ]

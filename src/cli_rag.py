@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """
-RAG CLI: Query interface for retrieving documents and generating answers with OpenAI.
+RAG CLI with Chain-of-Thought (CoT) pipeline:
+Retrieve → Plan → Draft → Insurance (fix citations)
+Outputs with inline [k] citations and "References:" section.
 """
 import os
 import sys
+import re
+from typing import List, Dict, Any, Tuple
 
 import click
 import weaviate
@@ -21,18 +25,30 @@ client_openai = None
 WEAVIATE_URL = os.getenv("WEAVIATE_URL", "http://localhost:8080")
 EMBEDDING_MODEL = "text-embedding-3-small"
 GENERATION_MODEL = os.getenv("GENERATION_MODEL", "gpt-4-turbo")
-TOP_K = int(os.getenv("TOP_K", "2"))
+TOP_K = int(os.getenv("TOP_K", "5"))  # Increased for better CoT performance
+
+# System prompts will be loaded from prompts.json
+SYSTEM_PROMPTS = {}
 
 
 def load_prompts():
-    """Load prompts from prompts.json file."""
+    """Load all prompts from prompts.json file."""
+    global SYSTEM_PROMPTS
     try:
         with open("src/prompts.json", "r") as f:
             prompts = json.load(f)
-            return {p["name"]: p["prompt"] for p in prompts}
+            prompts_dict = {p["name"]: p["prompt"] for p in prompts}
+            # Extract system prompts
+            SYSTEM_PROMPTS = {
+                "planner": prompts_dict.get("SYSTEM_PROMPT_PLANNER", ""),
+                "drafter": prompts_dict.get("SYSTEM_PROMPT_DRAFTER", ""),
+                "insurer": prompts_dict.get("SYSTEM_PROMPT_INSURER", "")
+            }
+            return prompts_dict
     except Exception as e:
         console.print(f"[red]Error loading prompts: {e}[/red]")
         sys.exit(1)
+
 
 def get_openai_client():
     """Get or initialize OpenAI client."""
@@ -90,77 +106,178 @@ def retrieve_documents(query_embedding, weaviate_client, top_k=TOP_K):
         console.print(f"[red]Error retrieving documents: {e}[/red]")
         return []
 
-@traceable(run_type="llm")
-def generate_answer(query, documents):
-    """Generate answer using OpenAI with retrieved documents as context, streamed."""
-    if not documents:
-        return "No relevant documents found. Please try a different query."
+
+def build_evidence_block(documents: List[Any]) -> Tuple[str, Dict[str, Dict[str, Any]]]:
+    """Build numbered evidence block from retrieved documents.
     
-    # Build context from retrieved documents
-    context_parts = []
-    for i, doc in enumerate(documents, 1):
+    Returns:
+        (evidence_text, evidence_map) where evidence_map maps doc_index to source info
+    """
+    lines = []
+    evidence_map = {}
+    
+    for i, doc in enumerate(documents):
         props = doc.properties
-        text = props.get("text", "")[:500]  # Truncate for brevity
         title = props.get("title", "Unknown")
         paper_id = props.get("paper_id", "Unknown")
-        context_parts.append(f"[{i}] {title} ({paper_id}):\n{text}...")
+        section_name = props.get("section", "main")  # Default to "main" if not available
+        text = props.get("text", "")
+        
+        entry = f"[{i}] {title} ({paper_id}) - {section_name}: {text}"
+        lines.append(entry)
+        evidence_map[i] = {
+            "title": title,
+            "paper_id": paper_id,
+            "section_name": section_name,
+            "text": props.get("text", ""),
+            "doc_index": i
+        }
     
-    context = "\n\n".join(context_parts)
-    prompts = load_prompts()
-    
-    prompt = f"""You are a helpful research assistant. Answer the following question based on the provided research papers.
+    return "\n".join(lines), evidence_map
 
-                Question: {query}
 
-                RELEVANT DOCUMENTS:
-                {context}
-
-                CITATION FORMAT: 
-                {prompts['CITATION_FORMAT']}
-                
-                INSTRUCTIONS: 
-                {prompts['NAIVE_ALSE']}
-                """
-    
+@traceable(run_type="llm")
+def generate_plan(query: str, evidence: str, prompts: Dict[str, str]):
+    """Generate a plan for answering based on evidence (hidden from user)."""
     try:
         client = get_openai_client()
+        prompt = prompts["PLAN_PROMPT"].format(evidence=evidence, question=query)
         
-        full_answer = ""
-        stream = client.chat.completions.create(
+        full_response = ""
+        with client.chat.completions.create(
             model=GENERATION_MODEL,
             messages=[
-                {"role": "system", "content": "You are a helpful research assistant that answers questions based on academic papers."},
+                {"role": "system", "content": SYSTEM_PROMPTS["planner"]},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.7,
-            max_tokens=1000,
+            temperature=0.3,
+            max_tokens=300,
             stream=True,
+        ) as stream:
+            for chunk in stream:
+                if chunk.choices[0].delta.content:
+                    token = chunk.choices[0].delta.content
+                    full_response += token
+        
+        return full_response.strip()
+    except Exception as e:
+        console.print(f"[red]Error generating plan: {e}[/red]")
+        return ""
+
+
+@traceable(run_type="llm")
+def generate_draft(query: str, plan: str, evidence: str, prompts: Dict[str, str]):
+    """Generate draft answer with inline citations."""
+    try:
+        client = get_openai_client()
+        prompt = prompts["DRAFT_PROMPT"].format(
+            plan=plan,
+            evidence=evidence,
+            question=query
         )
         
-        for chunk in stream:
-            if chunk.choices[0].delta.content:
-                token = chunk.choices[0].delta.content
-                full_answer += token
-                console.print(token, end="", style="cyan")
+        full_response = ""
+        with client.chat.completions.create(
+            model=GENERATION_MODEL,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPTS["drafter"]},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.5,
+            max_tokens=1000,
+            stream=True,
+        ) as stream:
+            for chunk in stream:
+                if chunk.choices[0].delta.content:
+                    token = chunk.choices[0].delta.content
+                    full_response += token
         
-        console.print()  # New line after streaming
-        return full_answer
+        return full_response.strip()
     except Exception as e:
-        console.print(f"[red]Error generating answer: {e}[/red]")
-        return None
+        console.print(f"[red]Error generating draft: {e}[/red]")
+        return ""
 
 
-def rag_query(query):
-    """Execute RAG pipeline: embed query, retrieve docs, generate answer."""
-    console.print(f"\n[cyan]Query:[/cyan] {query}\n")
+@traceable(run_type="llm")
+def generate_final_answer(evidence: str, draft: str, prompts: Dict[str, str]):
+    """Insurance pass: Fix and validate citations in draft using token streaming."""
+    try:
+        client = get_openai_client()
+        prompt = prompts["INSURANCE_PROMPT"].format(
+            evidence=evidence,
+            draft=draft
+        )
+        
+        full_response = ""
+        with client.chat.completions.create(
+            model=GENERATION_MODEL,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPTS["insurer"]},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3,
+            max_tokens=1000,
+            stream=True,
+        ) as stream:
+            for chunk in stream:
+                if chunk.choices[0].delta.content:
+                    token = chunk.choices[0].delta.content
+                    full_response += token
+                    console.print(token, end="", highlight=False)
+        
+        console.print()  # Newline after streaming
+        return full_response.strip()
+    except Exception as e:
+        console.print(f"[red]Error generating final answer: {e}[/red]")
+        return ""
+
+
+def extract_used_citations(text: str) -> List[Dict[str, Any]]:
+    """Extract dict-based citations from text.
     
-    # Get query embedding
+    Returns list of unique citation dicts found in the answer.
+    """
+    # Match pattern: [{'doc_index': X, 'section_name': '...', 'paper_id': '...'}]
+    pattern = r"\[\{'doc_index':\s*(\d+),\s*'section_name':\s*'([^']*)',\s*'paper_id':\s*'([^']*)'\}\]"
+    matches = re.findall(pattern, text)
+    
+    citations = []
+    seen = set()
+    for doc_index, section_name, paper_id in matches:
+        key = (int(doc_index), section_name, paper_id)
+        if key not in seen:
+            citations.append({
+                "doc_index": int(doc_index),
+                "section_name": section_name,
+                "paper_id": paper_id
+            })
+            seen.add(key)
+    
+    # Sort by doc_index
+    citations.sort(key=lambda x: x["doc_index"])
+    return citations
+
+
+def extract_answer_and_references(text: str) -> Tuple[str, str]:
+    """Split final output into answer and references sections."""
+    if "References:" in text:
+        parts = text.split("References:", 1)
+        answer = parts[0].strip()
+        references = "References:\n" + parts[1].strip()
+        return answer, references
+    return text.strip(), ""
+
+
+def rag_query(query: str):
+    """Execute CoT RAG pipeline: embed → retrieve → plan → draft → insurance."""
+    console.print(f"\n[bold cyan]Query:[/bold cyan] {query}\n")
+    
+    # Step 1: Embedding and retrieval
     with console.status("[yellow]Embedding query...[/yellow]"):
         query_embedding = get_embedding(query)
         if query_embedding is None:
             return
     
-    # Connect to Weaviate and retrieve documents
     weaviate_client = get_weaviate_client()
     
     with console.status("[yellow]Searching for relevant documents...[/yellow]"):
@@ -174,20 +291,57 @@ def rag_query(query):
     
     console.print(f"[green]Found {len(documents)} relevant documents[/green]\n")
     
-    # Generate answer with streaming
-    console.print("[bold cyan]Answer:[/bold cyan]")
-    answer = generate_answer(query, documents)
+    # Build evidence block
+    evidence, evidence_map = build_evidence_block(documents)
     
-    if not answer:
+    # Load prompts
+    prompts = load_prompts()
+    
+    # Step 2: Plan (hidden)
+    with console.status("[yellow]Planning answer strategy...[/yellow]"):
+        plan = generate_plan(query, evidence, prompts)
+    
+    if not plan:
+        console.print("[red]Failed to generate plan[/red]\n")
         return
     
-    # Show sources
-    console.print("\n[dim]Sources:[/dim]")
-    for i, doc in enumerate(documents, 1):
-        props = doc.properties
-        title = props.get("title", "Unknown")
-        paper_id = props.get("paper_id", "Unknown")
-        console.print(f"  [{i}] {title} ({paper_id})")
+    # Step 3: Draft with inline citations
+    with console.status("[yellow]Drafting answer with citations...[/yellow]"):
+        draft = generate_draft(query, plan, evidence, prompts)
+    
+    if not draft:
+        console.print("[red]Failed to generate draft[/red]\n")
+        return
+    
+    # Step 4: Insurance pass (fix citations) - streamed
+    console.print("[bold cyan]Final Answer:[/bold cyan]")
+    final_answer = generate_final_answer(evidence, draft, prompts)
+    
+    if not final_answer:
+        console.print("[red]Failed to generate final answer[/red]\n")
+        return
+    
+    # Parse output
+    answer_text, references_text = extract_answer_and_references(final_answer)
+    used_citations = extract_used_citations(answer_text)
+    
+    # Display answer
+    console.print("[bold cyan]Answer:[/bold cyan]")
+    console.print(Markdown(answer_text))
+    
+    # Display references
+    console.print("\n[bold cyan]References:[/bold cyan]")
+    for citation in used_citations:
+        doc_idx = citation["doc_index"]
+        section = citation["section_name"]
+        paper_id = citation["paper_id"]
+        
+        if doc_idx in evidence_map:
+            info = evidence_map[doc_idx]
+            console.print(
+                f"  [{{'doc_index': {doc_idx}, 'section_name': '{section}', 'paper_id': '{paper_id}'}}]"
+            )
+            console.print(f"    → {info['title']} ({paper_id}) - {section}")
     
     console.print()
 
@@ -206,15 +360,15 @@ def rag_query(query):
     help='Number of documents to retrieve',
 )
 def main(query, interactive, top_k):
-    """RAG CLI: Query documents and get AI-generated answers with citations."""
-    # OpenAI client will be initialized on first use
-    
+    """RAG CLI with CoT: Query documents and get AI-generated answers with citations."""
     # Override TOP_K if provided
     global TOP_K
     TOP_K = top_k
     
     console.print(Panel(
-        "[bold cyan]RAG Query Interface[/bold cyan]\nPowered by Weaviate + OpenAI",
+        "[bold cyan]RAG Query Interface with Chain-of-Thought[/bold cyan]\n"
+        "Retrieve → Plan → Draft → Validate\n"
+        "[dim]Powered by Weaviate + OpenAI[/dim]",
         border_style="cyan"
     ))
     
@@ -242,7 +396,9 @@ def main(query, interactive, top_k):
             "  Single query:\n"
             "    python src/cli_rag.py \"What is affective events?\"\n\n"
             "  Interactive mode:\n"
-            "    python src/cli_rag.py --interactive[/yellow]",
+            "    python src/cli_rag.py --interactive\n\n"
+            "  Custom retrieval count:\n"
+            "    python src/cli_rag.py \"question\" --top-k 12[/yellow]",
             title="[bold cyan]Examples[/bold cyan]",
             border_style="cyan"
         ))
