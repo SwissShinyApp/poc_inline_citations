@@ -4,7 +4,11 @@
         "prompt": "Each citation in-text should be reference as [[{'doc_index': <<DOC INDEX POSITION ON RETRIEVED DOCUMENTS, 'section_name': <<SECTION_NAME>>, 'paper_id': <<PAPER ID>>]]"
     },
     {
-        "name": "NAIVE_ALSE",
+        "name": "NAIVE_ALCE",
         "prompt": "Write an accurate, engaging, and concise answer for the given question using only the provided search results (some of which might be irrelevant) and cite them properly. Use an unbiased and journalistic tone. Always cite for any factual claim. When citing several search results, use <<[[CITATION_1]], [[CITATION_2]], [[CITATION_3]]>>. Cite at least one document and at most three documents for each content meaningful sentence. If multiple documents support the sentence, only cite a minimum sufficient subset of the documents."
+    }, 
+    {
+        "name": "GCITE_ZEROSHOT",
+        "prompt":"Instructions: Answer the QUESTION using the numbered Context sentences. After each answer sentence (or clause), append a citation tag exactly like <cite>[{'doc_index': i, 'section_name': section, 'paper_id': paper_id}]</cite> that points to the supporting Context index(es).• Every factual claim must have at least one <cite>[{'doc_index': i, 'section_name': section, 'paper_id': paper_id}]</cite> tag.• After the answer, output a References block that lists only the indices you cited, one per line as: [k] <Context title> — sent local_sent_index: verbatim Context sentence."
     }
 ]

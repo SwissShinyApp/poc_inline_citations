@@ -91,7 +91,7 @@ def retrieve_documents(query_embedding, weaviate_client, top_k=TOP_K):
         return []
 
 @traceable(run_type="llm")
-def generate_answer(query, documents):
+def generate_answer(query, documents, prompt_name='NAIVE_ALSE'):
     """Generate answer using OpenAI with retrieved documents as context, streamed."""
     if not documents:
         return "No relevant documents found. Please try a different query."
@@ -119,7 +119,7 @@ def generate_answer(query, documents):
                 {prompts['CITATION_FORMAT']}
                 
                 INSTRUCTIONS: 
-                {prompts['NAIVE_ALSE']}
+                {prompts[prompt_name]}
                 """
     
     try:
@@ -150,7 +150,7 @@ def generate_answer(query, documents):
         return None
 
 
-def rag_query(query):
+def rag_query(query, prompt='NAIVE_ALSE'):
     """Execute RAG pipeline: embed query, retrieve docs, generate answer."""
     console.print(f"\n[cyan]Query:[/cyan] {query}\n")
     
@@ -176,7 +176,7 @@ def rag_query(query):
     
     # Generate answer with streaming
     console.print("[bold cyan]Answer:[/bold cyan]")
-    answer = generate_answer(query, documents)
+    answer = generate_answer(query, documents, prompt)
     
     if not answer:
         return
@@ -205,7 +205,13 @@ def rag_query(query):
     default=TOP_K,
     help='Number of documents to retrieve',
 )
-def main(query, interactive, top_k):
+@click.option(
+    '--prompt',
+    type=str,
+    default='NAIVE_ALCE',
+    help='Prompt template to use for answer generation',
+)
+def main(query, interactive, top_k, prompt):
     """RAG CLI: Query documents and get AI-generated answers with citations."""
     # OpenAI client will be initialized on first use
     
@@ -228,13 +234,13 @@ def main(query, interactive, top_k):
                     console.print("[yellow]Goodbye![/yellow]")
                     break
                 if user_query:
-                    rag_query(user_query)
+                    rag_query(user_query, prompt)
             except KeyboardInterrupt:
                 console.print("\n[yellow]Interrupted. Goodbye![/yellow]")
                 break
     elif query:
         # Single query mode
-        rag_query(query)
+        rag_query(query, prompt)
     else:
         # No query provided, show help
         console.print(Panel(
