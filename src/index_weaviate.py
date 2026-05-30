@@ -66,7 +66,7 @@ def create_schema(client):
                 {
                     "name": "text",
                     "dataType": ["text"],
-                    "description": "Full text of the document",
+                    "description": "Full text of the document section",
                 },
                 {
                     "name": "title",
@@ -84,6 +84,16 @@ def create_schema(client):
                     "dataType": ["text"],
                     "description": "Source dataset",
                 },
+                {
+                    "name": "section_name",
+                    "dataType": ["text"],
+                    "description": "Name of the section from the paper",
+                },
+                {
+                    "name": "section_idx",
+                    "dataType": ["int"],
+                    "description": "Index of the section in the full_text array",
+                },
             ],
             "vectorizer": "none",
             "vectorIndexConfig": {
@@ -98,22 +108,18 @@ def create_schema(client):
         raise
 
 
-def flatten_full_text(full_text_sections):
-    """Flatten the nested full_text structure into a single string."""
-    if not full_text_sections:
-        return ""
+def format_section_text(section):
+    """Format a single section into a string."""
+    section_name = section.get("section_name", "")
+    paragraphs = section.get("paragraphs", [])
     
     text_parts = []
-    for section in full_text_sections:
-        section_name = section.get("section_name", "")
-        paragraphs = section.get("paragraphs", [])
-        
-        if section_name:
-            text_parts.append(f"## {section_name}")
-        
-        for para in paragraphs:
-            if para.strip():
-                text_parts.append(para)
+    if section_name:
+        text_parts.append(f"## {section_name}")
+    
+    for para in paragraphs:
+        if para.strip():
+            text_parts.append(para)
     
     return "\n\n".join(text_parts)
 
@@ -176,47 +182,57 @@ def index_documents(json_file, delete_existing=False):
     console.print("[cyan]Indexing documents...[/cyan]")
     
     indexed_count = 0
+    total_sections = sum(len(paper_data.get("full_text", [])) for paper_data in data.values())
+    
     with Progress() as progress:
-        task = progress.add_task("[cyan]Processing...", total=len(data))
+        task = progress.add_task("[cyan]Processing...", total=total_sections)
         
         for paper_id, paper_data in data.items():
             try:
                 title = paper_data.get("title", "")
                 full_text_sections = paper_data.get("full_text", [])
                 
-                # Flatten full_text into a single string
-                text = flatten_full_text(full_text_sections)
-                
-                if not text.strip():
+                # Index each section separately
+                for section_idx, section in enumerate(full_text_sections):
+                    try:
+                        section_name = section.get("section_name", "")
+                        text = format_section_text(section)
+                        
+                        if not text.strip():
+                            progress.update(task, advance=1)
+                            continue
+                        
+                        # Get embedding
+                        embedding = get_embedding(text)
+                        if embedding is None:
+                            progress.update(task, advance=1)
+                            continue
+                        
+                        # Prepare object
+                        obj = {
+                            "text": text,
+                            "title": title,
+                            "paper_id": paper_id,
+                            "source": "qasper-train-v0.1",
+                            "section_name": section_name,
+                            "section_idx": section_idx,
+                        }
+                        
+                        # Add to Weaviate with vector
+                        collection.data.insert(
+                            properties=obj,
+                            vector=embedding,
+                        )
+                        
+                        indexed_count += 1
+                        
+                    except Exception as e:
+                        console.print(f"[yellow]Warning: Failed to index section {section_idx} of {paper_id}: {e}[/yellow]")
+                    
                     progress.update(task, advance=1)
-                    continue
-                
-                # Get embedding
-                embedding = get_embedding(text)
-                if embedding is None:
-                    progress.update(task, advance=1)
-                    continue
-                
-                # Prepare object
-                obj = {
-                    "text": text,
-                    "title": title,
-                    "paper_id": paper_id,
-                    "source": "qasper-train-v0.1",
-                }
-                
-                # Add to Weaviate with vector
-                collection.data.insert(
-                    properties=obj,
-                    vector=embedding,
-                )
-                
-                indexed_count += 1
-                
+                    
             except Exception as e:
-                console.print(f"[yellow]Warning: Failed to index {paper_id}: {e}[/yellow]")
-            
-            progress.update(task, advance=1)
+                console.print(f"[yellow]Warning: Failed to process {paper_id}: {e}[/yellow]")
     
     console.print(f"[green]✓ Indexed {indexed_count} documents successfully[/green]")
     
