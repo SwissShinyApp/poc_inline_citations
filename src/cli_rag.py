@@ -17,8 +17,8 @@ console = Console()
 client_cohere = None
 
 WEAVIATE_URL = os.getenv("WEAVIATE_URL", "http://localhost:8080")
-EMBEDDING_MODEL = "text-embedding-3-small"
-GENERATION_MODEL = os.getenv("GENERATION_MODEL", "command-r7b-12-2024")
+EMBEDDING_MODEL = "embed-english-v3.0"
+GENERATION_MODEL = "command-r7b-12-2024"
 TOP_K = int(os.getenv("TOP_K", "5"))
 
 
@@ -56,12 +56,14 @@ def get_embedding(text):
             model=EMBEDDING_MODEL,
             texts=[text],
             input_type="search_query",
+            embedding_types=["float"],  # explicitly request float embeddings
         )
-        return response.embeddings[0]
+        # Access the float_ attribute directly, then get the first embedding
+        embedding = response.embeddings.float_[0]
+        return [float(v) for v in embedding]
     except Exception as e:
         console.print(f"[red]Error getting embedding: {e}[/red]")
         return None
-
 
 @traceable(run_type="retriever")
 def retrieve_documents(query_embedding, weaviate_client, top_k=TOP_K):
@@ -94,13 +96,17 @@ def format_documents_for_cohere(documents):
         text = props.get("text", "")[:500]  # Truncate for brevity
         title = props.get("title", "Unknown")
         paper_id = props.get("paper_id", "Unknown")
+        section_idx = props.get("section_idx", 0)
+        
+        # Create unique document ID by combining paper_id and section index
+        unique_id = f"{paper_id}_sec{section_idx}"
         
         cohere_doc = {
             "data": {
                 "title": title,
                 "snippet": text,
             },
-            "id": paper_id,  # Use paper_id as the document ID
+            "id": unique_id,  # Use unique ID combining paper_id and section index
         }
         cohere_documents.append(cohere_doc)
     
@@ -109,20 +115,18 @@ def format_documents_for_cohere(documents):
 
 @traceable(run_type="llm")
 def generate_answer(query, documents):
-    """Generate answer using Cohere with retrieved documents as context, with fast citations and token-level streaming."""
+    """Generate answer using Cohere with retrieved documents as context, with fast inline citations."""
     if not documents:
         return "No relevant documents found. Please try a different query."
-    
-    # Format documents for Cohere API
+
     cohere_documents = format_documents_for_cohere(documents)
-    
+
     try:
         client = get_cohere_client()
-        
-        full_answer = ""
-        citations_list = []
-        
-        # Use chat_stream with fast citations
+
+        response_text = ""
+        citations = []
+
         stream = client.chat_stream(
             model=GENERATION_MODEL,
             messages=[
@@ -140,32 +144,26 @@ def generate_answer(query, documents):
             temperature=0.7,
             max_tokens=1000,
         )
-        
-        # Process streaming response
+
+        # Process streaming response — print citations inline as they arrive
         for chunk in stream:
             if chunk:
-                # Handle text content (token-level streaming)
                 if chunk.type == "content-delta":
-                    if chunk.delta.message.content:
-                        token = chunk.delta.message.content.text
-                        full_answer += token
-                        console.print(token, end="", style="cyan")
-                
-                # Handle citations
-                elif chunk.type == "citation-start":
-                    if chunk.delta.message.citations:
-                        citation = chunk.delta.message.citations
-                        citations_list.append(citation)
-                        # Print citation marker inline
-                        citation_id = citation.sources[0].id if citation.sources else "?"
-                        console.print(f" [{citation_id}]", end="", style="yellow")
-        
+                    text = chunk.delta.message.content.text
+                    response_text += text
+                    console.print(text, end="", style="cyan")
+                if chunk.type == "citation-start":
+                    citation = chunk.delta.message.citations
+                    citations.append(citation)
+                    # Print each cited source ID inline, right where the model used it
+                    source_ids = ", ".join(source.id for source in citation.sources)
+                    console.print(f" [[bold yellow]{source_ids}[/bold yellow]]", end="", style="")
+
         console.print()  # New line after streaming
-        return full_answer, citations_list
+        return response_text, citations
     except Exception as e:
         console.print(f"[red]Error generating answer: {e}[/red]")
         return None, []
-
 
 def rag_query(query):
     """Execute RAG pipeline: embed query, retrieve docs, generate answer."""

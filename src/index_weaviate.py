@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Index documents from QASPER dataset into Weaviate.
-Extracts full_text from each paper and creates embeddings using OpenAI.
+Extracts full_text from each paper and creates embeddings using Cohere.
 """
 import json
 import os
@@ -9,16 +9,16 @@ import sys
 from pathlib import Path
 
 import click
+import cohere
 import weaviate
-from openai import OpenAI
 from rich.console import Console
 from rich.progress import Progress
 
 console = Console()
-client_openai = None
+client_cohere = None
 
 WEAVIATE_URL = os.getenv("WEAVIATE_URL", "http://localhost:8080")
-EMBEDDING_MODEL = "text-embedding-3-small"
+EMBEDDING_MODEL = "embed-english-v3.0"
 BATCH_SIZE = 100
 
 
@@ -124,27 +124,30 @@ def format_section_text(section):
     return "\n\n".join(text_parts)
 
 
-def get_openai_client():
-    """Get or initialize OpenAI client."""
-    global client_openai
-    if client_openai is None:
-        api_key = os.getenv("OPENAI_API_KEY")
+def get_cohere_client():
+    """Get or initialize Cohere client."""
+    global client_cohere
+    if client_cohere is None:
+        api_key = os.getenv("COHERE_API_KEY")
         if not api_key:
-            console.print("[red]Error: OPENAI_API_KEY environment variable not set[/red]")
+            console.print("[red]Error: COHERE_API_KEY environment variable not set[/red]")
             sys.exit(1)
-        client_openai = OpenAI(api_key=api_key)
-    return client_openai
+        client_cohere = cohere.ClientV2(api_key=api_key)
+    return client_cohere
 
 
 def get_embedding(text):
-    """Get embedding from OpenAI for the given text."""
+    """Get embedding from Cohere for the given text."""
     try:
-        client = get_openai_client()
-        response = client.embeddings.create(
+        client = get_cohere_client()
+        response = client.embed(
             model=EMBEDDING_MODEL,
-            input=text,
+            texts=[text],
+            input_type="search_document",
+            embedding_types=["float"],  # explicitly request float embeddings
         )
-        return response.data[0].embedding
+        embedding = response.embeddings.float_[0]
+        return [float(v) for v in embedding]
     except Exception as e:
         console.print(f"[red]Error getting embedding: {e}[/red]")
         return None
@@ -254,7 +257,7 @@ def index_documents(json_file, delete_existing=False):
 )
 def main(file, delete):
     """Index QASPER documents into Weaviate."""
-    # OpenAI client will be initialized on first use
+    # Cohere client will be initialized on first use
     index_documents(file, delete_existing=delete)
 
 
