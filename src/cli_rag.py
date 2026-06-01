@@ -19,7 +19,7 @@ client_openai = None
 
 WEAVIATE_URL = os.getenv("WEAVIATE_URL", "http://localhost:8080")
 EMBEDDING_MODEL = "text-embedding-3-small"
-GENERATION_MODEL = os.getenv("GENERATION_MODEL", "gpt-4-turbo")
+GENERATION_MODEL = os.getenv("GENERATION_MODEL", "gpt-4o-mini")
 TOP_K = int(os.getenv("TOP_K", "5"))
 
 
@@ -49,6 +49,7 @@ def get_weaviate_client():
         sys.exit(1)
 
 
+@traceable(run_type="retriever", name="embedding")
 def get_embedding(text):
     """Get embedding from OpenAI for the given text."""
     try:
