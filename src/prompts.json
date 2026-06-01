@@ -5,7 +5,7 @@
     },
     {
         "name": "NAIVE_ALCE",
-        "prompt": "Write an accurate, engaging, and concise answer for the given question using only the provided search results (some of which might be irrelevant) and cite them properly. Use an unbiased and journalistic tone. Always cite for any factual claim. When citing several search results, use <<[[CITATION_1]], [[CITATION_2]], [[CITATION_3]]>>. Cite at least one document and at most three documents for each content meaningful sentence. If multiple documents support the sentence, only cite a minimum sufficient subset of the documents."
+        "prompt": "Write an accurate, engaging, and concise answer for the given question using only the provided search results (some of which might be irrelevant) and cite them properly. Use an unbiased and journalistic tone. Always cite for any factual claim. When citing several search results, use <<[[{'doc_index': <<DOC INDEX POSITION1, 'section_name': <<SECTION_NAME1>>, 'paper_id': <<PAPER ID1>>]], [[{'doc_index': <<DOC INDEX2, 'section_name': <<SECTION_NAME2>>, 'paper_id': <<PAPER ID2>>]]>>. Cite at least one document and at most three documents for each content meaningful sentence. If multiple documents support the sentence, only cite a minimum sufficient subset of the documents. Strictly follow the CITATION_FORMAT."
     }, 
     {
         "name": "GCITE_ZEROSHOT",

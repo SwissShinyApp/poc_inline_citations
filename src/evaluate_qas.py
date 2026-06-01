@@ -31,6 +31,7 @@ from cli_rag import (
     retrieve_documents,
     generate_answer,
     get_openai_client,
+    load_prompts,
 )
 
 console = Console()
@@ -39,6 +40,7 @@ console = Console()
 DATA_FILE = "data/dummy_data/qasper-train-v0.1.json"
 RESULTS_DIR = "results"
 TOP_K = int(os.getenv("TOP_K", "5"))
+DEFAULT_PROMPT = "NAIVE_ALCE"
 
 
 def load_qas_questions(data_file):
@@ -74,7 +76,7 @@ def ensure_results_dir(tag):
     return result_path
 
 
-def evaluate_question(question, weaviate_client, tag):
+def evaluate_question(question, weaviate_client, tag, prompt_name=DEFAULT_PROMPT):
     """
     Evaluate a single question through RAG pipeline.
     Returns dict with results and metrics.
@@ -88,7 +90,7 @@ def evaluate_question(question, weaviate_client, tag):
         run_type="chain",
         name=f"evaluate_question_{question_id[:8]}",
         tags=["rag-evaluation", tag],
-        metadata={"tag": tag, "question_id": question_id}
+        metadata={"tag": tag, "question_id": question_id, "prompt_name": prompt_name}
     )
     def _evaluate():
         result = {
@@ -96,6 +98,7 @@ def evaluate_question(question, weaviate_client, tag):
             "title": question["title"],
             "question_id": question_id,
             "question": question_text,
+            "prompt_name": prompt_name,
             "timestamp": datetime.now().isoformat(),
             "metrics": {
                 "embedding_latency_ms": 0,
@@ -135,7 +138,7 @@ def evaluate_question(question, weaviate_client, tag):
             
             # Step 3: Generation
             gen_start = time.time()
-            answer = generate_answer(question_text, documents)
+            answer = generate_answer(question_text, documents, prompt_name=prompt_name)
             gen_latency = (time.time() - gen_start) * 1000
             result["metrics"]["generation_latency_ms"] = round(gen_latency, 2)
             
@@ -152,11 +155,12 @@ def evaluate_question(question, weaviate_client, tag):
 
 
 @traceable(run_type="chain", name="run_evaluation", tags=["rag-evaluation"], metadata={"evaluation_type": "batch"})
-def run_evaluation(questions, tag):
+def run_evaluation(questions, tag, prompt_name=DEFAULT_PROMPT):
     """Run evaluation for all questions."""
     results_path = ensure_results_dir(tag)
     results = {
         "tag": tag,
+        "prompt_name": prompt_name,
         "timestamp": datetime.now().isoformat(),
         "total_questions": len(questions),
         "questions_completed": 0,
@@ -181,7 +185,7 @@ def run_evaluation(questions, tag):
             )
             
             for question in questions:
-                result = evaluate_question(question, weaviate_client, tag)
+                result = evaluate_question(question, weaviate_client, tag, prompt_name=prompt_name)
                 results["results"].append(result)
                 
                 if result["error"]:
@@ -215,6 +219,7 @@ def save_results(results, results_path):
         # Print summary
         console.print("\n[bold cyan]Evaluation Summary[/bold cyan]")
         console.print(f"  Tag: {results['tag']}")
+        console.print(f"  Prompt: {results['prompt_name']}")
         console.print(f"  Total Questions: {results['total_questions']}")
         console.print(f"  Completed: {results['questions_completed']}")
         console.print(f"  Failed: {results['questions_failed']}")
@@ -239,7 +244,13 @@ def save_results(results, results_path):
     default=None,
     help='Limit number of questions to evaluate (for testing)',
 )
-def main(tag, limit):
+@click.option(
+    '--prompt',
+    type=str,
+    default=DEFAULT_PROMPT,
+    help='Prompt template to use for answer generation',
+)
+def main(tag, limit, prompt):
     """Run QAS evaluation through RAG pipeline."""
     
     # Generate tag if not provided
@@ -248,7 +259,15 @@ def main(tag, limit):
     
     console.print(f"[bold cyan]Starting QAS Evaluation[/bold cyan]\n")
     console.print(f"Tag: [yellow]{tag}[/yellow]")
+    console.print(f"Prompt: [yellow]{prompt}[/yellow]")
     console.print(f"Results will be saved to: [yellow]{RESULTS_DIR}/{tag}[/yellow]\n")
+    
+    # Validate prompt exists
+    prompts = load_prompts()
+    if prompt not in prompts:
+        console.print(f"[red]Error: Prompt '{prompt}' not found in prompts.json[/red]")
+        console.print(f"[yellow]Available prompts: {', '.join(prompts.keys())}[/yellow]")
+        sys.exit(1)
     
     # Load questions
     questions = load_qas_questions(DATA_FILE)
@@ -258,7 +277,7 @@ def main(tag, limit):
         console.print(f"[yellow]Limited to {limit} questions for testing[/yellow]\n")
     
     # Run evaluation
-    results, results_path = run_evaluation(questions, tag)
+    results, results_path = run_evaluation(questions, tag, prompt_name=prompt)
     
     # Save results
     save_results(results, results_path)

@@ -92,7 +92,7 @@ def retrieve_documents(query_embedding, weaviate_client, top_k=TOP_K):
         return []
 
 @traceable(run_type="llm")
-def generate_answer(query, documents, prompt_name='NAIVE_ALSE'):
+def generate_answer(query, documents, prompt_name='NAIVE_ALCE'):
     """Generate answer using OpenAI with retrieved documents as context, streamed."""
     if not documents:
         return "No relevant documents found. Please try a different query."
@@ -112,16 +112,18 @@ def generate_answer(query, documents, prompt_name='NAIVE_ALSE'):
     
     prompt = f"""You are a helpful research assistant. Answer the following question based on the provided research papers.
 
-                Question: {query}
 
                 RELEVANT DOCUMENTS:
                 {context}
-
+                
                 CITATION FORMAT: 
                 {prompts['CITATION_FORMAT']}
                 
                 INSTRUCTIONS: 
                 {prompts[prompt_name]}
+
+                Question: {query}
+
                 """
     
     try:
