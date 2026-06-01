@@ -94,6 +94,11 @@ def create_schema(client):
                     "dataType": ["int"],
                     "description": "Index of the section in the full_text array",
                 },
+                {
+                    "name": "paragraph_idx",
+                    "dataType": ["int"],
+                    "description": "Index of the paragraph in the section",
+                },
             ],
             "vectorizer": "none",
             "vectorIndexConfig": {
@@ -108,20 +113,9 @@ def create_schema(client):
         raise
 
 
-def format_section_text(section):
-    """Format a single section into a string."""
-    section_name = section.get("section_name", "")
-    paragraphs = section.get("paragraphs", [])
-    
-    text_parts = []
-    if section_name:
-        text_parts.append(f"## {section_name}")
-    
-    for para in paragraphs:
-        if para.strip():
-            text_parts.append(para)
-    
-    return "\n\n".join(text_parts)
+def get_paragraph_text(paragraph):
+    """Return a single paragraph text."""
+    return paragraph.strip() if paragraph else ""
 
 
 def get_openai_client():
@@ -182,54 +176,66 @@ def index_documents(json_file, delete_existing=False):
     console.print("[cyan]Indexing documents...[/cyan]")
     
     indexed_count = 0
-    total_sections = sum(len(paper_data.get("full_text", [])) for paper_data in data.values())
+    total_paragraphs = sum(
+        sum(len(section.get("paragraphs", [])) for section in paper_data.get("full_text", []))
+        for paper_data in data.values()
+    )
     
     with Progress() as progress:
-        task = progress.add_task("[cyan]Processing...", total=total_sections)
+        task = progress.add_task("[cyan]Processing...", total=total_paragraphs)
         
         for paper_id, paper_data in data.items():
             try:
                 title = paper_data.get("title", "")
                 full_text_sections = paper_data.get("full_text", [])
                 
-                # Index each section separately
+                # Index each paragraph separately
                 for section_idx, section in enumerate(full_text_sections):
                     try:
                         section_name = section.get("section_name", "")
-                        text = format_section_text(section)
+                        paragraphs = section.get("paragraphs", [])
                         
-                        if not text.strip():
+                        # Index each paragraph in the section
+                        for paragraph_idx, paragraph in enumerate(paragraphs):
+                            try:
+                                text = get_paragraph_text(paragraph)
+                                
+                                if not text:
+                                    progress.update(task, advance=1)
+                                    continue
+                                
+                                # Get embedding
+                                embedding = get_embedding(text)
+                                if embedding is None:
+                                    progress.update(task, advance=1)
+                                    continue
+                                
+                                # Prepare object
+                                obj = {
+                                    "text": text,
+                                    "title": title,
+                                    "paper_id": paper_id,
+                                    "source": "qasper-train-v0.1",
+                                    "section_name": section_name,
+                                    "section_idx": section_idx,
+                                    "paragraph_idx": paragraph_idx,
+                                }
+                                
+                                # Add to Weaviate with vector
+                                collection.data.insert(
+                                    properties=obj,
+                                    vector=embedding,
+                                )
+                                
+                                indexed_count += 1
+                                
+                            except Exception as e:
+                                console.print(f"[yellow]Warning: Failed to index paragraph {paragraph_idx} of section {section_idx} in {paper_id}: {e}[/yellow]")
+                            
                             progress.update(task, advance=1)
-                            continue
-                        
-                        # Get embedding
-                        embedding = get_embedding(text)
-                        if embedding is None:
-                            progress.update(task, advance=1)
-                            continue
-                        
-                        # Prepare object
-                        obj = {
-                            "text": text,
-                            "title": title,
-                            "paper_id": paper_id,
-                            "source": "qasper-train-v0.1",
-                            "section_name": section_name,
-                            "section_idx": section_idx,
-                        }
-                        
-                        # Add to Weaviate with vector
-                        collection.data.insert(
-                            properties=obj,
-                            vector=embedding,
-                        )
-                        
-                        indexed_count += 1
-                        
-                    except Exception as e:
-                        console.print(f"[yellow]Warning: Failed to index section {section_idx} of {paper_id}: {e}[/yellow]")
                     
-                    progress.update(task, advance=1)
+                    except Exception as e:
+                        console.print(f"[yellow]Warning: Failed to process section {section_idx} of {paper_id}: {e}[/yellow]")
                     
             except Exception as e:
                 console.print(f"[yellow]Warning: Failed to process {paper_id}: {e}[/yellow]")

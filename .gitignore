@@ -218,3 +218,6 @@ __marimo__/
 .streamlit/secrets.toml
 data/dummy_data/qasper-dev-v0.1.json
 data/dummy_data/qasper-train-v0.1.json
+
+# QAS Evaluation Results
+results/

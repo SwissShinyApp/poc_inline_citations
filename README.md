@@ -32,7 +32,7 @@ This project includes a simple Retrieval-Augmented Generation (RAG) pipeline tha
    WEAVIATE_URL=http://localhost:8080
    
    # Optional variables
-   GENERATION_MODEL=gpt-4-turbo        # Model to use for generation (defaults to gpt-4-turbo)
+   GENERATION_MODEL=gpt-4o-mini        # Model to use for generation (defaults to gpt-4o-mini)
    TOP_K=5                             # Number of documents to retrieve (defaults to 5)
    ```
    
@@ -43,7 +43,7 @@ This project includes a simple Retrieval-Augmented Generation (RAG) pipeline tha
    - `LANGSMITH_ENDPOINT=https://aws.api.smith.langchain.com` (optional): LangSmith endpoint for tracing data
    - `LANGSMITH_API_KEY`="your-api-key" (optional): LangSmith API key for tracing
    - `LANGSMITH_PROJECT`="your-project-name" (optional): LangSmith project name for organizing traces
-   - `GENERATION_MODEL` (optional): OpenAI model for generating answers; defaults to `gpt-4-turbo`
+   - `GENERATION_MODEL` (optional): OpenAI model for generating answers; defaults to `gpt-4o-mini`
    - `TOP_K` (optional): Number of documents to retrieve from Weaviate; defaults to `5`
 
 3. **Start Weaviate locally:**
@@ -111,6 +111,38 @@ python src/cli_rag.py "Your question here?" --top-k 10
    - Composes a prompt with retrieved documents as context
    - Calls OpenAI Chat/Completion API to generate an answer with citations
    - Displays the answer and source documents
+
+## Evaluating the Pipeline
+
+Run automated evaluations on all QAS (Question-Answer Sets) from the QASPER dataset:
+
+```bash
+# Run evaluation with auto-generated timestamp tag
+python src/evaluate_qas.py
+
+# Run with custom tag
+python src/evaluate_qas.py --tag "experiment_v1"
+
+# Test run with limited questions
+python src/evaluate_qas.py --tag "test" --limit 3
+```
+
+Results are saved to `results/<TAG>/results.json` with:
+- Question and answer for each QAS item
+- Latency metrics (embedding, retrieval, generation)
+- Number of documents retrieved
+- Any errors encountered
+
+**Analyze results programmatically:**
+```python
+import json
+with open("results/experiment_v1/results.json") as f:
+    data = json.load(f)
+print(f"Average latency: {data['average_latency_ms']}ms")
+print(f"Success rate: {data['questions_completed']}/{data['total_questions']}")
+```
+
+See [README_EVALUATION.md](README_EVALUATION.md) for detailed evaluation documentation.
 
 ### Troubleshooting
 

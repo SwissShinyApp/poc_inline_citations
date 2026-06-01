@@ -20,8 +20,8 @@ client_openai = None
 
 WEAVIATE_URL = os.getenv("WEAVIATE_URL", "http://localhost:8080")
 EMBEDDING_MODEL = "text-embedding-3-small"
-GENERATION_MODEL = os.getenv("GENERATION_MODEL", "gpt-4-turbo")
-TOP_K = int(os.getenv("TOP_K", "2"))
+GENERATION_MODEL = os.getenv("GENERATION_MODEL", "gpt-4o-mini")
+TOP_K = int(os.getenv("TOP_K", "5"))
 
 
 def load_prompts():
@@ -60,6 +60,7 @@ def get_weaviate_client():
         sys.exit(1)
 
 
+@traceable(run_type="retriever", name="embedding")
 def get_embedding(text):
     """Get embedding from OpenAI for the given text."""
     try:
@@ -102,8 +103,9 @@ def generate_answer(query, documents, prompt_name='NAIVE_ALSE'):
         props = doc.properties
         text = props.get("text", "")[:500]  # Truncate for brevity
         title = props.get("title", "Unknown")
-        paper_id = props.get("paper_id", "Unknown")
-        context_parts.append(f"[{i}] {title} ({paper_id}):\n{text}...")
+        section_name = props.get("section_name", "Unknown")
+        paragraph_idx = props.get("paragraph_idx", 0)
+        context_parts.append(f"[{i}] {title} - {section_name} (paragraph {paragraph_idx}):\n{text}...")
     
     context = "\n\n".join(context_parts)
     prompts = load_prompts()
@@ -186,8 +188,9 @@ def rag_query(query, prompt='NAIVE_ALSE'):
     for i, doc in enumerate(documents, 1):
         props = doc.properties
         title = props.get("title", "Unknown")
-        paper_id = props.get("paper_id", "Unknown")
-        console.print(f"  [{i}] {title} ({paper_id})")
+        section_name = props.get("section_name", "Unknown")
+        paragraph_idx = props.get("paragraph_idx", 0)
+        console.print(f"  [{i}] {title} - {section_name} (paragraph {paragraph_idx})")
     
     console.print()
 
