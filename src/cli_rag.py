@@ -24,7 +24,7 @@ client_openai = None
 
 WEAVIATE_URL = os.getenv("WEAVIATE_URL", "http://localhost:8080")
 EMBEDDING_MODEL = "text-embedding-3-small"
-GENERATION_MODEL = os.getenv("GENERATION_MODEL", "gpt-4-turbo")
+GENERATION_MODEL = os.getenv("GENERATION_MODEL", "gpt-4o-mini")
 TOP_K = int(os.getenv("TOP_K", "5"))  # Increased for better CoT performance
 
 # System prompts will be loaded from prompts.json
@@ -122,9 +122,17 @@ def build_evidence_block(documents: List[Any]) -> Tuple[str, Dict[str, Dict[str,
         title = props.get("title", "Unknown")
         section_name = props.get("section_name", "Unknown")
         paragraph_idx = props.get("paragraph_idx", 0)
-        context_parts.append(f"[{i}] {title} - {section_name} (paragraph {paragraph_idx}):\n{text}...")
+        text = props.get("text", "")
+        
+        lines.append(f"[{i}] {title} - {section_name} (paragraph {paragraph_idx}):\n{text}...")
+        
+        evidence_map[i] = {
+            "title": title,
+            "section_name": section_name,
+            "paragraph_idx": paragraph_idx,
+        }
     
-    return "\n".join(lines), evidence_map
+    return "\n\n".join(lines), evidence_map
 
 
 @traceable(run_type="llm")

@@ -29,8 +29,14 @@ from cli_rag import (
     get_embedding,
     get_weaviate_client,
     retrieve_documents,
-    generate_answer,
     get_openai_client,
+    generate_plan,
+    generate_draft,
+    generate_final_answer,
+    load_prompts,
+    build_evidence_block,
+    extract_used_citations,
+    extract_answer_and_references,
 )
 
 console = Console()
@@ -76,7 +82,8 @@ def ensure_results_dir(tag):
 
 def evaluate_question(question, weaviate_client, tag):
     """
-    Evaluate a single question through RAG pipeline.
+    Evaluate a single question through CoT RAG pipeline:
+    Retrieve → Plan → Draft → Insurance (fix citations)
     Returns dict with results and metrics.
     Traced individually with tag in metadata.
     """
@@ -100,7 +107,9 @@ def evaluate_question(question, weaviate_client, tag):
             "metrics": {
                 "embedding_latency_ms": 0,
                 "retrieval_latency_ms": 0,
-                "generation_latency_ms": 0,
+                "plan_latency_ms": 0,
+                "draft_latency_ms": 0,
+                "insurance_latency_ms": 0,
                 "total_latency_ms": 0,
                 "documents_retrieved": 0,
             },
@@ -110,6 +119,9 @@ def evaluate_question(question, weaviate_client, tag):
         
         try:
             total_start = time.time()
+            
+            # Load prompts
+            prompts = load_prompts()
             
             # Step 1: Embedding
             embed_start = time.time()
@@ -133,13 +145,49 @@ def evaluate_question(question, weaviate_client, tag):
                 result["metrics"]["total_latency_ms"] = round((time.time() - total_start) * 1000, 2)
                 return result
             
-            # Step 3: Generation
-            gen_start = time.time()
-            answer = generate_answer(question_text, documents)
-            gen_latency = (time.time() - gen_start) * 1000
-            result["metrics"]["generation_latency_ms"] = round(gen_latency, 2)
+            # Build evidence block from retrieved documents
+            evidence, evidence_map = build_evidence_block(documents)
             
-            result["answer"] = answer
+            # Step 3: Generate Plan (hidden step)
+            plan_start = time.time()
+            plan = generate_plan(question_text, evidence, prompts)
+            plan_latency = (time.time() - plan_start) * 1000
+            result["metrics"]["plan_latency_ms"] = round(plan_latency, 2)
+            
+            if not plan:
+                result["error"] = "Failed to generate plan"
+                result["metrics"]["total_latency_ms"] = round((time.time() - total_start) * 1000, 2)
+                return result
+            
+            # Step 4: Generate Draft with inline citations
+            draft_start = time.time()
+            draft = generate_draft(question_text, plan, evidence, prompts)
+            draft_latency = (time.time() - draft_start) * 1000
+            result["metrics"]["draft_latency_ms"] = round(draft_latency, 2)
+            
+            if not draft:
+                result["error"] = "Failed to generate draft"
+                result["metrics"]["total_latency_ms"] = round((time.time() - total_start) * 1000, 2)
+                return result
+            
+            # Step 5: Insurance pass (fix and validate citations)
+            insurance_start = time.time()
+            final_answer = generate_final_answer(evidence, draft, prompts)
+            insurance_latency = (time.time() - insurance_start) * 1000
+            result["metrics"]["insurance_latency_ms"] = round(insurance_latency, 2)
+            
+            if not final_answer:
+                result["error"] = "Failed to generate final answer"
+                result["metrics"]["total_latency_ms"] = round((time.time() - total_start) * 1000, 2)
+                return result
+            
+            # Parse answer and extract citations
+            answer_text, references_text = extract_answer_and_references(final_answer)
+            used_citations = extract_used_citations(answer_text)
+            
+            result["answer"] = answer_text
+            result["references"] = references_text
+            result["citations_count"] = len(used_citations)
             result["metrics"]["total_latency_ms"] = round((time.time() - total_start) * 1000, 2)
             
         except Exception as e:
@@ -218,8 +266,26 @@ def save_results(results, results_path):
         console.print(f"  Total Questions: {results['total_questions']}")
         console.print(f"  Completed: {results['questions_completed']}")
         console.print(f"  Failed: {results['questions_failed']}")
-        console.print(f"  Average Latency: {results['average_latency_ms']}ms")
+        console.print(f"  Average Total Latency: {results['average_latency_ms']}ms")
         console.print()
+        
+        # Print breakdown of average latencies across all results
+        if results['results']:
+            valid_results = [r for r in results['results'] if not r.get('error')]
+            if valid_results:
+                avg_embedding = sum(r['metrics']['embedding_latency_ms'] for r in valid_results) / len(valid_results)
+                avg_retrieval = sum(r['metrics']['retrieval_latency_ms'] for r in valid_results) / len(valid_results)
+                avg_plan = sum(r['metrics']['plan_latency_ms'] for r in valid_results) / len(valid_results)
+                avg_draft = sum(r['metrics']['draft_latency_ms'] for r in valid_results) / len(valid_results)
+                avg_insurance = sum(r['metrics']['insurance_latency_ms'] for r in valid_results) / len(valid_results)
+                
+                console.print("[bold cyan]CoT Pipeline Latency Breakdown[/bold cyan]")
+                console.print(f"  Embedding:  {round(avg_embedding, 2)}ms")
+                console.print(f"  Retrieval:  {round(avg_retrieval, 2)}ms")
+                console.print(f"  Plan:       {round(avg_plan, 2)}ms")
+                console.print(f"  Draft:      {round(avg_draft, 2)}ms")
+                console.print(f"  Insurance:  {round(avg_insurance, 2)}ms")
+                console.print()
         
         return results_file
     except Exception as e:
