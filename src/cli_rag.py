@@ -91,8 +91,9 @@ def generate_answer(query, documents):
         props = doc.properties
         text = props.get("text", "")[:500]  # Truncate for brevity
         title = props.get("title", "Unknown")
-        paper_id = props.get("paper_id", "Unknown")
-        context_parts.append(f"[{i}] {title} ({paper_id}):\n{text}...")
+        section_name = props.get("section_name", "Unknown")
+        paragraph_idx = props.get("paragraph_idx", 0)
+        context_parts.append(f"[{i}] {title} - {section_name} (paragraph {paragraph_idx}):\n{text}...")
     
     context = "\n\n".join(context_parts)
     
@@ -169,8 +170,9 @@ def rag_query(query):
     for i, doc in enumerate(documents, 1):
         props = doc.properties
         title = props.get("title", "Unknown")
-        paper_id = props.get("paper_id", "Unknown")
-        console.print(f"  [{i}] {title} ({paper_id})")
+        section_name = props.get("section_name", "Unknown")
+        paragraph_idx = props.get("paragraph_idx", 0)
+        console.print(f"  [{i}] {title} - {section_name} (paragraph {paragraph_idx})")
     
     console.print()
 
