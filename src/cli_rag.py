@@ -76,6 +76,7 @@ def get_weaviate_client():
         sys.exit(1)
 
 
+@traceable(run_type="retriever", name="embedding")
 def get_embedding(text):
     """Get embedding from OpenAI for the given text."""
     try:
@@ -119,19 +120,9 @@ def build_evidence_block(documents: List[Any]) -> Tuple[str, Dict[str, Dict[str,
     for i, doc in enumerate(documents):
         props = doc.properties
         title = props.get("title", "Unknown")
-        paper_id = props.get("paper_id", "Unknown")
-        section_name = props.get("section", "main")  # Default to "main" if not available
-        text = props.get("text", "")
-        
-        entry = f"[{i}] {title} ({paper_id}) - {section_name}: {text}"
-        lines.append(entry)
-        evidence_map[i] = {
-            "title": title,
-            "paper_id": paper_id,
-            "section_name": section_name,
-            "text": props.get("text", ""),
-            "doc_index": i
-        }
+        section_name = props.get("section_name", "Unknown")
+        paragraph_idx = props.get("paragraph_idx", 0)
+        context_parts.append(f"[{i}] {title} - {section_name} (paragraph {paragraph_idx}):\n{text}...")
     
     return "\n".join(lines), evidence_map
 
