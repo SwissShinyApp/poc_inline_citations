@@ -18,7 +18,7 @@ client_cohere = None
 
 WEAVIATE_URL = os.getenv("WEAVIATE_URL", "http://localhost:8080")
 EMBEDDING_MODEL = "embed-english-v3.0"
-GENERATION_MODEL = "command-r7b-12-2024"
+GENERATION_MODEL = "command-r-08-2024"
 TOP_K = int(os.getenv("TOP_K", "5"))
 
 
@@ -97,16 +97,18 @@ def format_documents_for_cohere(documents):
         title = props.get("title", "Unknown")
         paper_id = props.get("paper_id", "Unknown")
         section_idx = props.get("section_idx", 0)
+        paragraph_idx = props.get("paragraph_idx", props.get("chunk_idx", i))
         
-        # Create unique document ID by combining paper_id and section index
-        unique_id = f"{paper_id}_sec{section_idx}"
+        # Create unique document ID including paragraph index for granular identification
+        # Format: {paper_id}_sec{section_idx}_para{paragraph_idx}
+        unique_id = f"{paper_id}_sec{section_idx}_para{paragraph_idx}"
         
         cohere_doc = {
             "data": {
                 "title": title,
                 "snippet": text,
             },
-            "id": unique_id,  # Use unique ID combining paper_id and section index
+            "id": unique_id,  # Unique ID combining paper_id, section index, and paragraph index
         }
         cohere_documents.append(cohere_doc)
     
