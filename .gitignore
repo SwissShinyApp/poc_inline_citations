@@ -221,3 +221,5 @@ data/dummy_data/qasper-train-v0.1.json
 
 # QAS Evaluation Results
 results/
+.claude/settings.json
+data/openai_vector_store.json
